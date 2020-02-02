@@ -121,6 +121,15 @@ func Dial(addr, passwd string) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = c.(*net.TCPConn).SetKeepAlive(true)
+	if err != nil {
+		return nil, err
+	}
+
+	err = c.(*net.TCPConn).SetKeepAlivePeriod(30 * time.Second)
+	if err != nil {
+		return nil, err
+	}
 	h := newConnection(c)
 	m, err := h.textreader.ReadMIMEHeader()
 	if err != nil {
