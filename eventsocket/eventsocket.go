@@ -44,6 +44,7 @@ var errTimeout = errors.New("Timeout")
 // Connection is the event socket connection handler.
 type Connection struct {
 	conn          net.Conn
+	connected     bool
 	reader        *bufio.Reader
 	textreader    *textproto.Reader
 	err           chan error
@@ -53,12 +54,13 @@ type Connection struct {
 // newConnection allocates a new Connection and initialize its buffers.
 func newConnection(c net.Conn) *Connection {
 	h := Connection{
-		conn:   c,
-		reader: bufio.NewReaderSize(c, bufferSize),
-		err:    make(chan error, 1),
-		cmd:    make(chan *Event),
-		api:    make(chan *Event),
-		evt:    make(chan *Event, eventsBuffer),
+		conn:      c,
+		connected: false,
+		reader:    bufio.NewReaderSize(c, bufferSize),
+		err:       make(chan error, 1),
+		cmd:       make(chan *Event),
+		api:       make(chan *Event),
+		evt:       make(chan *Event, eventsBuffer),
 	}
 	h.textreader = textproto.NewReader(h.reader)
 	return &h
@@ -120,6 +122,14 @@ func Dial(addr, passwd string) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = c.(*net.TCPConn).SetKeepAlive(true)
+	if err != nil {
+		return nil, err
+	}
+	err = c.(*net.TCPConn).SetKeepAlivePeriod(30 * time.Second)
+	if err != nil {
+		return nil, err
+	}
 	return connect(c, passwd)
 }
 
@@ -158,6 +168,7 @@ func connect(c net.Conn, passwd string) (*Connection, error) {
 		return nil, errInvalidPassword
 	}
 	go h.readLoop()
+	h.connected = true
 	return h, err
 }
 
@@ -269,7 +280,12 @@ func (h *Connection) RemoteAddr() net.Addr {
 
 // Close terminates the connection.
 func (h *Connection) Close() {
+	h.connected = false
 	h.conn.Close()
+}
+
+func (h *Connection) CanSend() bool {
+	return h.conn != nil && h.connected
 }
 
 // ReadEvent reads and returns events from the server. It supports both plain
