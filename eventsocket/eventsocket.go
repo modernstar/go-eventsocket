@@ -44,7 +44,6 @@ var errTimeout = errors.New("Timeout")
 // Connection is the event socket connection handler.
 type Connection struct {
 	conn          net.Conn
-	connected     bool
 	reader        *bufio.Reader
 	textreader    *textproto.Reader
 	err           chan error
@@ -121,36 +120,43 @@ func Dial(addr, passwd string) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = c.(*net.TCPConn).SetKeepAlive(true)
-	if err != nil {
-		return nil, err
-	}
+	return connect(c, passwd)
+}
 
-	err = c.(*net.TCPConn).SetKeepAlivePeriod(30 * time.Second)
+// DialTimeout acts like Dial but takes a timeout.
+func DialTimeout(addr, passwd string, timeout time.Duration) (*Connection, error) {
+	c, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return nil, err
 	}
+	return connect(c, passwd)
+}
+
+// connect will create a new connection, authenticate and start read loop
+func connect(c net.Conn, passwd string) (*Connection, error) {
 	h := newConnection(c)
 	m, err := h.textreader.ReadMIMEHeader()
 	if err != nil {
-		c.Close()
+		_ = c.Close()
 		return nil, err
 	}
 	if m.Get("Content-Type") != "auth/request" {
-		c.Close()
+		_ = c.Close()
 		return nil, errMissingAuthRequest
 	}
-	fmt.Fprintf(c, "auth %s\r\n\r\n", passwd)
+	if _, err := fmt.Fprintf(c, "auth %s\r\n\r\n", passwd); err != nil {
+		_ = c.Close()
+		return nil, err
+	}
 	m, err = h.textreader.ReadMIMEHeader()
 	if err != nil {
-		c.Close()
+		_ = c.Close()
 		return nil, err
 	}
 	if m.Get("Reply-Text") != "+OK accepted" {
-		c.Close()
+		_ = c.Close()
 		return nil, errInvalidPassword
 	}
-	h.connected = true
 	go h.readLoop()
 	return h, err
 }
@@ -264,7 +270,6 @@ func (h *Connection) RemoteAddr() net.Addr {
 // Close terminates the connection.
 func (h *Connection) Close() {
 	h.conn.Close()
-	h.connected = false
 }
 
 // ReadEvent reads and returns events from the server. It supports both plain
@@ -342,7 +347,9 @@ func (h *Connection) Send(command string) (*Event, error) {
 	//if strings.IndexAny(command, "\r\n") > 0 {
 	//	return nil, errInvalidCommand
 	//}
-	fmt.Fprintf(h.conn, "%s\r\n\r\n", command)
+	if h.conn != nil {
+		_, _ = fmt.Fprintf(h.conn, "%s\r\n\r\n", command)
+	}
 	var (
 		ev  *Event
 		err error
@@ -459,10 +466,6 @@ func (h *Connection) ExecuteUUID(uuid, appName, appArg string) (*Event, error) {
 		"execute-app-name": appName,
 		"execute-app-arg":  appArg,
 	}, uuid, "")
-}
-
-func (h *Connection) CanSend() bool {
-	return h.conn != nil && h.connected
 }
 
 // EventHeader represents events as a pair of key:value.
