@@ -44,6 +44,7 @@ var errTimeout = errors.New("Timeout")
 // Connection is the event socket connection handler.
 type Connection struct {
 	conn          net.Conn
+	connected     bool
 	reader        *bufio.Reader
 	textreader    *textproto.Reader
 	err           chan error
@@ -140,6 +141,7 @@ func Dial(addr, passwd string) (*Connection, error) {
 		c.Close()
 		return nil, errInvalidPassword
 	}
+	h.connected = true
 	go h.readLoop()
 	return h, err
 }
@@ -253,6 +255,7 @@ func (h *Connection) RemoteAddr() net.Addr {
 // Close terminates the connection.
 func (h *Connection) Close() {
 	h.conn.Close()
+	h.connected = false
 }
 
 // ReadEvent reads and returns events from the server. It supports both plain
@@ -447,6 +450,10 @@ func (h *Connection) ExecuteUUID(uuid, appName, appArg string) (*Event, error) {
 		"execute-app-name": appName,
 		"execute-app-arg":  appArg,
 	}, uuid, "")
+}
+
+func (h *Connection) CanSend() bool {
+	return h.conn != nil && h.connected
 }
 
 // EventHeader represents events as a pair of key:value.
